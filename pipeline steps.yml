@@ -1,0 +1,115 @@
+Please refer to CLI commands used in pipleline steps.
+
+====================================================================
+                          MLOPS CI Pipeline
+====================================================================
+
+step name: Use Python 3.6
+cli command: NA
+
+step name: install python requirements
+cli command: NA (provide path of shell script)
+
+step name: data test
+cli command: pytest training/train_test.py --doctest-modules --junitxml=junit/test-results.xml --cov=data_test --cov-report=xml --cov-report=html
+
+step name: Publish Test Results
+cli command:
+
+step name: install Azure ML CLI
+cli command: NA
+
+step name: create Azure ML workspace
+cli command: az ml workspace create -g $(azureml.resourceGroup) -w $(azureml.workspaceName) -l $(azureml.location) --exist-ok --yes
+
+step name: Azure ML Compute Cluster
+cli command: az ml computetarget create amlcompute -g $(azureml.resourceGroup) -w $(azureml.workspaceName) -n $(amlcompute.clusterName) -s $(amlcompute.vmSize) --min-nodes  $(amlcompute.minNodes) --max-nodes  $(amlcompute.maxNodes) --idle-seconds-before-scaledown $(amlcompute.idleSecondsBeforeScaledown)
+
+step name: upload data to Datastore
+cli command: az ml datastore upload -w $(azureml.workspaceName) -g $(azureml.resourceGroup) -n $(az ml datastore show-default  -w $(azureml.workspaceName) -g $(azureml.resourceGroup) --query name -o tsv) -p data -u insurance --overwrite true
+
+step name: Make Metadata and Models directory
+cli command: mkdir metadata && mkdir models
+
+step name: Training Model
+cli command: az ml run submit-script -g $(azureml.resourceGroup) -w $(azureml.workspaceName) -e $(experiment.name) --ct $(amlcompute.clusterName) -d conda_dependencies.yml -c train_insurance -t ../metadata/run.json train_aml.py
+
+step name: Registering Model
+cli command: az ml model register -g $(azureml.resourceGroup) -w $(azureml.workspaceName) -n $(model.name) -f metadata/run.json  --asset-path outputs/models/insurance_model.pkl -d "Classification model for filing a claim prediction" --tag "data"="insurance" --tag "model"="classification" --model-framework ScikitLearn -t metadata/model.json
+
+step name: Downloading Model
+cli command: az ml model download -g $(azureml.resourceGroup) -w $(azureml.workspaceName) -i $(jq -r .modelId metadata/model.json) -t ./models --overwrite
+
+step name: CopyFiles
+cli command: NA
+
+step name: Publish Pipeline Artifact
+cli command: NA
+
+# Variables for pipeline
+# 'amlcompute.clusterName': amlcluster
+# 'amlcompute.idleSecondsBeforeScaledown': 300
+# 'amlcompute.maxNodes': 2
+# 'amlcompute.minNodes': 0
+# 'amlcompute.vmSize': Standard_DS2_V2 
+# 'azureml.location': centralus
+# 'azureml.resourceGroup': mlops-wsh-rg-1
+# 'azureml.workspaceName': mlops-wsh-aml-1
+# 'experiment.name': insurance_classification
+# 'model.name': insurance_model 
+
+
+====================================================================
+                        MLOPS CD(Replease) Pipeline Steps
+====================================================================
+1. Deploy to Staging
+step name: Use Python 3.6
+cli command: NA
+
+step name: add ML Extension
+cli command: az extension add -n azure-cli-ml
+
+step name: Deploy to ACI
+cli command: az ml model deploy -g $(azureml.resourceGroup) -w $(azureml.workspaceName) -n $(service.name.staging) -f ../metadata/model.json --dc aciDeploymentConfigStaging.yml --ic inferenceConfig.yml --overwrite
+
+step name: Install Requirements
+cli command: NA (provide path of shell script)
+
+step name: Staging Test
+cli command: pytest staging_test.py --doctest-modules --junitxml=junit/test-results.xml --cov-report=xml --cov-report=html --scoreurl $(az ml service show -g $(azureml.resourceGroup) -w $(azureml.workspaceName) -n $(service.name.staging) --query scoringUri -o tsv)
+
+step name: Publish Staging Test Results
+cli command: NA
+
+2. Deploy to Production
+step name: Use Python 3.6
+cli command: NA
+
+step name: add ML Extension
+cli command: az extension add -n azure-cli-ml
+
+step name: Create AKS
+cli command: az ml computetarget create aks -g $(azureml.resourceGroup) -w $(azureml.workspaceName) -n $(aks.clusterName) -s $(aks.vmSize) -a $(aks.agentCount)
+
+step name: Deploy to AKS
+cli command: az ml model deploy -g $(azureml.resourceGroup) -w $(azureml.workspaceName) -n $(service.name.prod) -f ../metadata/model.json --dc aksDeploymentConfigProd.yml --ic inferenceConfig.yml --ct $(aks.clusterName) --overwrite
+
+step name: Install Requirements
+cli command: NA (provide path of shell script)
+
+step name: Prod Test
+cli command: pytest prod_test.py --doctest-modules --junitxml=junit/test-results.xml --cov=integration_test --cov-report=xml --cov-report=html --scoreurl $(az ml service show -g $(azureml.resourceGroup) -w $(azureml.workspaceName) -n $(service.name.prod) --query scoringUri -o tsv) --scorekey $(az ml service get-keys -g $(azureml.resourceGroup) -w $(azureml.workspaceName) -n $(service.name.prod) --query primaryKey -o tsv)
+
+step name: Publish Staging Test Results
+cli command: NA
+
+
+# Variables for pipeline
+# 'aks.agentCount': 3
+# 'aks.clusterName': aks
+# 'aks.vmSize': Standard_A2_v2
+# 'azureml.resourceGroup': mlops-wsh-rg-1
+# 'azureml.workspaceName': mlops-wsh-aml-1
+# 'service.name.prod': insurance-service-aks 
+# 'service.name.staging': insurance-service-aci
+
